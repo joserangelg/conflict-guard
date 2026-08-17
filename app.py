@@ -41,6 +41,90 @@ RESULT_STYLE = {
     FinalResult.REQUIRES_REVIEW: ("info", "Availability requires review"),
 }
 
+SCREEN_META = {
+    1: ("New commitment", "What's coming up?",
+        "Tell me the commitment. I'll scan every calendar before you say yes."),
+    2: ("Checking calendars", "Here's what I found",
+        "Every event I checked, and why, before you trust the answer."),
+    3: ("Your decision", "What do you want to do?",
+        "You decide — I'll draft the reply, but I never send it for you."),
+}
+
+CUSTOM_CSS = """
+<style>
+:root {
+    --ink: #161a2e;
+    --ink-soft: #6b7086;
+    --card-bg: #ffffff;
+    --page-bg: #eef0f7;
+    --border: #e4e6f0;
+    --accent: #161a2e;
+}
+.stApp { background: var(--page-bg); }
+[data-testid="stHeader"] { background: transparent; }
+.block-container { padding-top: 2.5rem; max-width: 720px; }
+html, body, [class*="css"] { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+
+/* header */
+.cg-header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 1.75rem; }
+.cg-header-left { display:flex; align-items:center; gap:0.75rem; }
+.cg-icon {
+    width:40px; height:40px; border-radius:12px; background: var(--accent); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:19px; flex-shrink:0;
+}
+.cg-eyebrow { font-size:11px; letter-spacing:.09em; color:var(--ink-soft); font-weight:700; text-transform:uppercase; }
+.cg-header-title { font-size:15px; font-weight:600; color:var(--ink); margin-top:1px; }
+.cg-dots { display:flex; gap:6px; }
+.cg-dot { width:22px; height:6px; border-radius:3px; background:#d7dae6; }
+.cg-dot.active { background: var(--accent); width:26px; }
+
+.cg-hero-title { font-size:1.7rem; font-weight:700; color: var(--ink); margin-bottom:0.15rem; letter-spacing:-0.01em; }
+.cg-hero-sub { font-size:0.95rem; color: var(--ink-soft); margin-bottom:1.5rem; }
+
+/* card containers (st.container(border=True)) */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--card-bg);
+    border: 1px solid var(--border) !important;
+    border-radius: 16px !important;
+    padding: 0.25rem 0.25rem;
+    box-shadow: 0 1px 2px rgba(22,26,46,0.04);
+}
+
+/* buttons */
+.stButton > button {
+    border-radius: 999px !important;
+    font-weight: 600 !important;
+    border: 1px solid var(--border) !important;
+    padding: 0.5rem 1.25rem !important;
+}
+.stButton > button[kind="primary"] {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+}
+.stButton > button[kind="primary"]:hover { opacity: 0.9; }
+
+/* alerts */
+div[data-testid="stAlert"] { border-radius: 14px !important; }
+
+/* inputs */
+.stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div,
+.stDateInput input, .stNumberInput input {
+    border-radius: 10px !important;
+}
+[data-testid="stFileUploaderDropzone"] { border-radius: 12px !important; background: #f8f9fc !important; }
+
+h2, h3 { color: var(--ink); }
+.cg-status-pill {
+    display:inline-block; font-size:12px; font-weight:600; padding:2px 10px; border-radius:999px;
+    background:#f1f2f8; color: var(--ink-soft); margin-bottom:6px;
+}
+</style>
+"""
+
+
+def inject_css():
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
 
 def init_state():
     defaults = {
@@ -102,21 +186,33 @@ def render_passive_followup():
             st.rerun()
 
 
-def render_sidebar_progress():
-    labels = {1: "1. Entry Point", 2: "2. AI-Powered Moment", 3: "3. Decision + Action"}
-    st.sidebar.markdown("### ConflictGuard")
-    for i in (1, 2, 3):
-        prefix = "**▶ " if i == st.session_state.step else "   "
-        suffix = "**" if i == st.session_state.step else ""
-        st.sidebar.markdown(f"{prefix}{labels[i]}{suffix}")
-    st.sidebar.divider()
+def render_header():
+    step = st.session_state.step
+    header_title, hero_title, hero_sub = SCREEN_META[step]
+    dots = "".join(
+        f'<span class="cg-dot{" active" if i == step else ""}"></span>' for i in (1, 2, 3)
+    )
+    st.markdown(
+        f"""
+        <div class="cg-header">
+          <div class="cg-header-left">
+            <div class="cg-icon">📅</div>
+            <div>
+              <div class="cg-eyebrow">Conflict Checker</div>
+              <div class="cg-header-title">{header_title}</div>
+            </div>
+          </div>
+          <div class="cg-dots">{dots}</div>
+        </div>
+        <div class="cg-hero-title">{hero_title}</div>
+        <div class="cg-hero-sub">{hero_sub}</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------- SCREEN 1
 def screen_entry_point():
-    st.title("1. Entry Point")
-    st.caption("Upload the calendars you want checked, then describe the commitment you're considering.")
-
     st.subheader("Home time zone")
     st.selectbox(
         "All events are normalized into this time zone for comparison. Original times are always preserved.",
@@ -236,7 +332,6 @@ def active_sources():
 
 
 def screen_ai_moment():
-    st.title("2. AI-Powered Moment")
     commitment = st.session_state.commitment
     if commitment is None:
         st.warning("No commitment entered yet.")
@@ -400,7 +495,6 @@ def draft_reply(decision, commitment, effective_result):
 
 
 def screen_decision():
-    st.title("3. Decision + Action")
     commitment = st.session_state.commitment
     result = st.session_state.eval_result
     effective = st.session_state.get("effective_result", result.final_result if result else None)
@@ -457,8 +551,9 @@ def screen_decision():
 def main():
     st.set_page_config(page_title="ConflictGuard", page_icon="\U0001F4C5", layout="centered")
     init_state()
+    inject_css()
     render_passive_followup()
-    render_sidebar_progress()
+    render_header()
 
     if st.session_state.step == 1:
         screen_entry_point()
