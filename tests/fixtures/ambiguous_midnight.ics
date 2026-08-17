@@ -1,0 +1,10 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test//Ambiguous//EN
+BEGIN:VEVENT
+UID:ambig-1@test
+SUMMARY:Possibly All Day (stored as timestamp)
+DTSTART;TZID=America/Los_Angeles:20260820T000000
+DTEND;TZID=America/Los_Angeles:20260821T000000
+END:VEVENT
+END:VCALENDAR
