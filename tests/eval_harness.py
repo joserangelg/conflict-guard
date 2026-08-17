@@ -40,6 +40,7 @@ def _sources(events_by_cat, statuses=None):
                             status=statuses.get(cat, SourceStatus.LOADED))
         s.events = events_by_cat.get(cat, [])
         s.confirmed_empty = statuses.get(f"{cat}_confirmed", False)
+        s.upload_time = datetime.now(TZ)  # fresh by default; freshness rule tested separately
         out.append(s)
     return out
 

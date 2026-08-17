@@ -12,12 +12,18 @@ Implements the LOCKED RULES from Section 4 (My Failure Mode Map):
 - The app checks soft conflicts using a default 30-minute buffer. Disabling
   it requires an explicit choice and a visible warning (enforced in app.py's
   UI; this module just honors buffer_minutes=None as "disabled").
+- LOCKED RULE -- CALENDAR FRESHNESS: verified availability requires every
+  connected provider to have synchronized within the past 5 minutes. If a
+  source has gone stale, the result is "Unable to verify full availability"
+  rather than a silently-trusted "Available" -- distinct from the coverage
+  failure above, since the data was present and correct at some point, it's
+  just no longer current enough to trust without re-checking.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from core.models import (
     Classification, EvaluationResult, EvidenceRow, FinalResult,
-    SourceStatus, TZStatus,
+    FRESHNESS_WINDOW_MINUTES, SourceStatus, TZStatus,
 )
 
 DEFAULT_BUFFER_MINUTES = 30
@@ -90,6 +96,32 @@ def _integrity_checks(sources, commitment, ambiguous_unresolved):
     return checks, reasons
 
 
+def _freshness_reasons(sources):
+    """Providers eligible for a verified result must have synced within the
+    freshness window. Sources already blocked by the coverage check (missing,
+    failed, unconfirmed-empty) are skipped here -- that failure is reported
+    separately so the two don't get conflated in the UI."""
+    reasons = []
+    verified_statuses = (SourceStatus.LOADED, SourceStatus.NO_RELEVANT_EVENTS)
+    for source in sources:
+        eligible = source.status in verified_statuses or (
+            source.status == SourceStatus.EMPTY_UNVERIFIED and source.confirmed_empty
+        )
+        if not eligible:
+            continue
+        if source.upload_time is None:
+            reasons.append(f"{source.category} calendar has no recorded sync time.")
+            continue
+        now = datetime.now(source.upload_time.tzinfo)
+        age_minutes = (now - source.upload_time).total_seconds() / 60
+        if age_minutes > FRESHNESS_WINDOW_MINUTES:
+            reasons.append(
+                f"{source.category} calendar last synced {int(age_minutes)} min ago "
+                f"(over the {FRESHNESS_WINDOW_MINUTES}-min freshness window)."
+            )
+    return reasons
+
+
 def evaluate(commitment, sources, buffer_minutes=DEFAULT_BUFFER_MINUTES):
     """sources: list[CalendarSource] already loaded via calendar_loader."""
     all_events = []
@@ -108,6 +140,17 @@ def evaluate(commitment, sources, buffer_minutes=DEFAULT_BUFFER_MINUTES):
             final_result=FinalResult.REQUIRES_REVIEW,
             evidence=[],
             blocking_reasons=reasons,
+            buffer_minutes=buffer_minutes,
+            integrity_checks=checks,
+        )
+
+    stale_reasons = _freshness_reasons(sources)
+    checks["data_synced_within_freshness_window"] = len(stale_reasons) == 0
+    if stale_reasons:
+        return EvaluationResult(
+            final_result=FinalResult.UNABLE_TO_VERIFY,
+            evidence=[],
+            blocking_reasons=stale_reasons,
             buffer_minutes=buffer_minutes,
             integrity_checks=checks,
         )

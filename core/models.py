@@ -11,11 +11,15 @@ from typing import Optional
 
 
 class SourceStatus(str, Enum):
-    LOADED = "Loaded"
+    """Values match the live-provider language of Section 4 (Connected /
+    Sync failed / Not connected) even though v1's actual transport is a
+    manual .ics upload standing in for a future OAuth/CalDAV sync -- see
+    README "Known v1 limitations"."""
+    LOADED = "Connected"
     NO_RELEVANT_EVENTS = "No relevant events"
     EMPTY_UNVERIFIED = "Empty or unverified"
-    FAILED = "Failed"
-    MISSING = "Missing"
+    FAILED = "Sync failed"
+    MISSING = "Not connected"
 
 
 class TZStatus(str, Enum):
@@ -37,9 +41,14 @@ class FinalResult(str, Enum):
     CONFLICT = "Conflict"
     SOFT_CONFLICT = "Soft conflict warning"
     REQUIRES_REVIEW = "Availability requires review"
+    UNABLE_TO_VERIFY = "Unable to verify full availability"
 
 
 CATEGORIES = ["Work", "School", "Personal"]
+
+# Section 4 LOCKED RULE -- CALENDAR FRESHNESS: verified availability requires
+# every connected provider to have synchronized within the past 5 minutes.
+FRESHNESS_WINDOW_MINUTES = 5
 
 
 @dataclass
@@ -70,7 +79,7 @@ class CalendarSource:
     relevant_event_count: int = 0     # events within the evaluation window
     error_message: Optional[str] = None
     file_size_bytes: Optional[int] = None
-    upload_time: Optional[datetime] = None
+    upload_time: Optional[datetime] = None  # doubles as "last synced" for the freshness rule
     confirmed_empty: bool = False
     events: list = field(default_factory=list)  # list[NormalizedEvent]
 

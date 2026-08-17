@@ -16,8 +16,8 @@ import streamlit as st
 
 from core import calendar_loader, conflict_engine, storage
 from core.models import (
-    CATEGORIES, CalendarSource, Classification, FinalResult, ProposedCommitment,
-    SourceStatus, TZStatus,
+    CATEGORIES, CalendarSource, Classification, FinalResult, FRESHNESS_WINDOW_MINUTES,
+    ProposedCommitment, SourceStatus, TZStatus,
 )
 
 COMMON_TIMEZONES = [
@@ -39,7 +39,10 @@ RESULT_STYLE = {
     FinalResult.CONFLICT: ("error", "Conflict"),
     FinalResult.SOFT_CONFLICT: ("warning", "Soft conflict warning"),
     FinalResult.REQUIRES_REVIEW: ("info", "Availability requires review"),
+    FinalResult.UNABLE_TO_VERIFY: ("info", "Unable to verify full availability"),
 }
+
+FRESHNESS_ELIGIBLE = (SourceStatus.LOADED, SourceStatus.NO_RELEVANT_EVENTS)
 
 SCREEN_META = {
     1: ("New commitment", "What's coming up?",
@@ -222,8 +225,13 @@ def screen_entry_point():
 
     st.subheader("Calendar sources")
     st.caption(
-        "Check the sources that are required for this decision. A required source must load "
+        "Check the sources that are required for this decision. A required source must connect "
         "successfully (or be confirmed empty) before the app will show a verified result."
+    )
+    st.caption(
+        f"v1 note: live OAuth (Google, Microsoft) and CalDAV (Apple) connections are the planned "
+        f"design -- this build simulates a \"connection\" as an .ics upload, and treats the upload "
+        f"moment as the sync time for the {FRESHNESS_WINDOW_MINUTES}-minute freshness rule below."
     )
 
     for cat in CATEGORIES:
@@ -233,7 +241,7 @@ def screen_entry_point():
                 st.checkbox(f"{cat} required", value=st.session_state.required[cat], key=f"required_{cat}")
                 st.session_state.required[cat] = st.session_state[f"required_{cat}"]
             with c2:
-                uploaded = st.file_uploader(f"{cat} calendar (.ics)", type=["ics"], key=f"upload_{cat}")
+                uploaded = st.file_uploader(f"{cat} calendar (.ics -- stands in for Connect)", type=["ics"], key=f"upload_{cat}")
                 if uploaded is not None:
                     raw = uploaded.getvalue()
                     if (st.session_state.sources[cat].filename != uploaded.name
@@ -249,19 +257,21 @@ def screen_entry_point():
 
             badge = STATUS_COLOR[source.status]
             st.markdown(f"{badge} **Status: {source.status.value}**")
+            if source.status in FRESHNESS_ELIGIBLE and source.upload_time:
+                st.caption(f"Last synced {source.upload_time.strftime('%I:%M:%S %p')}")
 
             if source.status == SourceStatus.FAILED:
-                st.error(f"This file could not be parsed: {source.error_message}")
+                st.error(f"This calendar could not be synced/parsed: {source.error_message}")
 
             if source.status == SourceStatus.EMPTY_UNVERIFIED:
                 st.warning(
-                    f"'{source.filename}' parsed successfully but contains **zero events**. "
-                    "This could mean the calendar is genuinely empty, or that the export failed "
-                    "or was truncated. The app cannot tell the difference on its own."
+                    f"'{source.filename}' synced successfully but returned **zero events**. "
+                    "This could mean the calendar is genuinely empty, or that the sync failed "
+                    "silently or returned partial data. The app cannot tell the difference on its own."
                 )
                 st.caption(
                     f"File: {source.filename} · {source.file_size_bytes} bytes · "
-                    f"uploaded {source.upload_time.strftime('%Y-%m-%d %H:%M') if source.upload_time else ''}"
+                    f"synced {source.upload_time.strftime('%Y-%m-%d %H:%M') if source.upload_time else ''}"
                 )
                 st.caption(
                     "⚠️ If you confirm this is intentional and it's actually wrong, the app "
@@ -355,8 +365,11 @@ def screen_ai_moment():
 
     with st.expander("Calendar source status", expanded=True):
         for s in sources:
-            st.markdown(f"{STATUS_COLOR[s.status]} **{s.category}** — {s.status.value}"
-                        + (f" ({s.filename})" if s.filename else ""))
+            line = f"{STATUS_COLOR[s.status]} **{s.category}** — {s.status.value}" + (f" ({s.filename})" if s.filename else "")
+            if s.status in FRESHNESS_ELIGIBLE and s.upload_time:
+                age_min = (datetime.now(s.upload_time.tzinfo) - s.upload_time).total_seconds() / 60
+                line += f" · synced {age_min:.1f} min ago"
+            st.markdown(line)
 
     # Ambiguous-date resolution gate
     ambiguous = [e for s in sources for e in s.events if e.is_ambiguous and e.ambiguity_resolved is None]
@@ -396,6 +409,24 @@ def screen_ai_moment():
         for reason in result.blocking_reasons:
             st.write(f"- {reason}")
         if st.button("← Back to Entry Point to fix"):
+            st.session_state.step = 1
+            st.rerun()
+        return
+
+    if result.final_result == FinalResult.UNABLE_TO_VERIFY:
+        st.write(f"Calendar data must be synced within the last {FRESHNESS_WINDOW_MINUTES} minutes to show a verified result:")
+        for reason in result.blocking_reasons:
+            st.write(f"- {reason}")
+        st.caption(
+            "In a live-integration build this would trigger an automatic re-sync. Here, re-syncing "
+            "means re-confirming the uploaded data is still current -- click below once you've done that."
+        )
+        if st.button("Re-verify calendars are current", type="primary"):
+            for s in sources:
+                if s.status in FRESHNESS_ELIGIBLE:
+                    s.upload_time = datetime.now(home_tz())
+            st.rerun()
+        if st.button("← Back to Entry Point"):
             st.session_state.step = 1
             st.rerun()
         return

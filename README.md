@@ -7,11 +7,19 @@ Managers) from the IMPACT living document (Sections 1–5).
 
 ## What it does
 
-You upload up to three `.ics` calendar exports (Work / School / Personal),
-describe a commitment you're considering, and ConflictGuard tells you
-whether you're actually free — showing the evidence behind the answer
-instead of just a label, and always leaving the accept/decline/reschedule
-decision to you.
+The target design (Section 5, updated) connects live to Google Calendar and
+Microsoft Outlook via OAuth and Apple iCloud Calendar via CalDAV. **This
+build simulates that connection** as an `.ics` upload per source (Work /
+School / Personal) — same status model, same freshness rule, same UI
+language ("Connected" / "Sync failed" / "Not connected") the live version
+would use, just without an actual OAuth/CalDAV transport behind it yet. See
+"Known v1 limitations" below for the honest line between what's real and
+what's simulated.
+
+You upload/"connect" up to three calendars, describe a commitment you're
+considering, and ConflictGuard tells you whether you're actually free —
+showing the evidence behind the answer instead of just a label, and always
+leaving the accept/decline/reschedule decision to you.
 
 Three screens, matching the mental model in Section 2:
 
@@ -42,14 +50,24 @@ Three screens, matching the mental model in Section 2:
   logged as feedback for review, not treated as new ground truth.
 - **Soft conflicts use a visible 30-minute default buffer** (15/60/off),
   and disabling it requires an explicit confirmation with a warning.
+- **No stale-data false confidence.** Verified availability requires every
+  connected source to have synced within the last 5 minutes (the upload
+  moment stands in for "synced" in this build). If a source has gone stale,
+  the result is "Unable to verify full availability," not a silently-trusted
+  green check — with a "Re-verify calendars are current" action that makes
+  the re-confirmation explicit rather than automatic.
 
 See `core/calendar_loader.py` and `core/conflict_engine.py` for the LOCKED
 RULE docstrings tying each behavior back to a specific failure mode.
 
 ## Known v1 limitations (by design — see Section 5)
 
-- Calendars are uploaded manually as `.ics` files; there are no live
-  Outlook/Google/Apple account connections.
+- **Live OAuth/CalDAV is the target design, not yet built.** Real
+  integrations (Google OAuth, Microsoft OAuth, Apple CalDAV +
+  app-specific password, credentials in the OS Keychain) are the next
+  concrete milestone — see "Live integration, next" below for what that
+  would take. Today, an `.ics` upload stands in for "connecting" a source,
+  and the upload timestamp stands in for "last synced."
 - No informal-commitment detection from texts/DMs/email in v1.
 - No real travel-time or fatigue estimation — just a user-selected buffer.
 - Recurring events are evaluated at their base occurrence only; recurrence
@@ -58,6 +76,27 @@ RULE docstrings tying each behavior back to a specific failure mode.
 - "Don't warn me again" overrides are not remembered across checks — an
   override only applies to the current run, since a future edit to a
   recurring event could otherwise hide a real conflict.
+
+## Live integration, next
+
+Wiring up the real connections from Section 4/5 needs setup only the
+project owner can do (registering OAuth apps), so it's scoped as follow-up
+work rather than silently faked:
+
+- **Google Calendar** — register an OAuth client in Google Cloud Console
+  (Calendar API, read-only scope), use the installed-app / PKCE flow so no
+  public redirect server is needed, store the refresh token in macOS
+  Keychain via `keyring`.
+- **Microsoft Outlook** — register an app in Microsoft Entra ID, use MSAL's
+  public-client flow against Microsoft Graph, same local-only redirect
+  approach.
+- **Apple iCloud Calendar** — CalDAV over HTTPS using an app-specific
+  password generated in Apple ID settings (no OAuth available); still
+  iCalendar-formatted under the hood, so it keeps the same all-day/ambiguous-
+  timestamp handling already in `core/calendar_loader.py`.
+- Swap `calendar_loader.load_calendar_source` for provider-specific fetchers
+  that return the same `CalendarSource`/`NormalizedEvent` shape — the
+  freshness rule, status model, and conflict engine don't need to change.
 
 ## Running it locally
 

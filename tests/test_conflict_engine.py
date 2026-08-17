@@ -39,6 +39,7 @@ def loaded_source(category, events):
     s = CalendarSource(category=category, filename="test.ics", status=SourceStatus.LOADED)
     s.events = events
     s.raw_event_count = len(events)
+    s.upload_time = datetime.now(TZ)  # fresh by default -- freshness rule is tested separately
     return s
 
 
@@ -169,3 +170,36 @@ def test_no_relevant_event_never_shown_as_evidence_noise():
     result = conflict_engine.evaluate(c, all_sources(work_events=[far_event]))
     assert result.final_result == FinalResult.AVAILABLE
     assert result.evidence == []
+
+
+# --------------------------------------------------------- freshness (Section 4)
+
+def test_stale_source_blocks_available_with_unable_to_verify():
+    c = commitment(18, 0, 19, 0)
+    sources = all_sources()
+    sources[0].upload_time = datetime.now(TZ) - timedelta(minutes=10)
+    result = conflict_engine.evaluate(c, sources)
+    assert result.final_result == FinalResult.UNABLE_TO_VERIFY
+    assert "Work" in result.blocking_reasons[0]
+
+
+def test_source_synced_within_window_is_fine():
+    c = commitment(18, 0, 19, 0)
+    sources = all_sources()
+    sources[0].upload_time = datetime.now(TZ) - timedelta(minutes=4)
+    result = conflict_engine.evaluate(c, sources)
+    assert result.final_result == FinalResult.AVAILABLE
+
+
+def test_missing_source_freshness_is_not_double_counted():
+    # A MISSING source is already blocked by the coverage check; it shouldn't
+    # also show up as a stale-sync reason once coverage is fixed.
+    c = commitment(18, 0, 19, 0)
+    sources = [
+        loaded_source("Work", []),
+        CalendarSource(category="School", status=SourceStatus.MISSING),
+        loaded_source("Personal", []),
+    ]
+    result = conflict_engine.evaluate(c, sources)
+    assert result.final_result == FinalResult.REQUIRES_REVIEW
+    assert not any("freshness" in r.lower() for r in result.blocking_reasons)
